@@ -24,6 +24,10 @@ type MaskResponse struct {
 	Masked string `json:"masked"`
 }
 
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
 var (
 	ctx         = context.Background()
 	redisClient *redis.Client
@@ -42,6 +46,13 @@ func initRedis() {
 		log.Fatalf("❌ Redis connection failed: %v", err)
 	}
 	log.Println("✅ Connected to Redis")
+}
+
+// JSON error response helper
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(ErrorResponse{Error: message})
 }
 
 // Lua script for token bucket rate limiting
@@ -74,7 +85,7 @@ func redisRateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
-			http.Error(w, "Unable to parse IP address", http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, "Unable to parse IP address")
 			return
 		}
 
@@ -86,13 +97,13 @@ func redisRateLimitMiddleware(next http.Handler) http.Handler {
 		result, err := redisClient.Eval(ctx, luaScript, []string{key},
 			maxTokens, refillTime, now).Result()
 		if err != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, "Internal error")
 			log.Printf("Redis error: %v", err)
 			return
 		}
 
 		if result.(int64) == 0 {
-			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			writeJSONError(w, http.StatusTooManyRequests, "Too Many Requests")
 			return
 		}
 
@@ -124,7 +135,7 @@ func maskHandler(w http.ResponseWriter, r *http.Request) {
 	var req MaskRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid JSON")
 		return
 	}
 
@@ -137,12 +148,12 @@ func maskHandler(w http.ResponseWriter, r *http.Request) {
 	case "aadhaar":
 		masked, ok = maskAadhaar(req.Value)
 	default:
-		http.Error(w, "Invalid type. Must be 'pan' or 'aadhaar'", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid type. Must be 'pan' or 'aadhaar'")
 		return
 	}
 
 	if !ok {
-		http.Error(w, "Invalid value for the specified type", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid value for the specified type")
 		return
 	}
 
