@@ -32,6 +32,16 @@ func MaskHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(MaskResponse{Masked: res})
 }
 
+func PingHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"message": "PII Masking API is live",
+		"time":    time.Now().Format(time.RFC3339),
+	})
+}
+
 // /bulk handler
 func BulkHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

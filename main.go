@@ -28,6 +28,7 @@ func main() {
 	mux.Handle("/detect", RequireAPIKeyMiddleware(http.HandlerFunc(DetectHandler)))
 	mux.Handle("/usage", RequireAPIKeyMiddleware(http.HandlerFunc(UsageHandler)))       // if enabled
 	mux.Handle("/metadata", RequireAPIKeyMiddleware(http.HandlerFunc(MetadataHandler))) // if enabled
+	mux.HandleFunc("/ping", PingHandler)
 
 	log.Println("Masking API running on :8080")
 	log.Fatal(http.ListenAndServe(":8080", RedisRateLimitMiddleware(mux)))
