@@ -49,29 +49,19 @@ func RedisRateLimitMiddleware(next http.Handler) http.Handler {
 
 func RequireAPIKeyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := r.Header.Get("X-API-Key")
-		if key == "" {
-			WriteJSONError(w, http.StatusUnauthorized, "Missing API key")
+		apiKey := r.Header.Get("X-RapidAPI-Key")
+		plan := r.Header.Get("X-RapidAPI-Plan")
+
+		if apiKey == "" || plan == "" {
+			WriteJSONError(w, http.StatusUnauthorized, "Missing RapidAPI headers")
 			return
 		}
 
-		meta, err := redisClient.HGetAll(ctx, "apikey:"+key).Result()
-		if err != nil || len(meta) == 0 || meta["active"] != "true" {
-			WriteJSONError(w, http.StatusUnauthorized, "Invalid or revoked API key")
-			return
-		}
+		// Optional: store plan in header for downstream handlers
+		r.Header.Set("X-Plan-Level", plan)
 
-		// Track usage
-		redisClient.Incr(ctx, "apikey:"+key+":usage_count")
-
-		// Rate limiting (3 req/sec per key)
-		limKey := "ratelimit:" + key
-		now := time.Now().Unix()
-		tokens := redisClient.Eval(ctx, luaScript, []string{limKey}, 3, 1, now)
-		if tokens.Err() != nil || tokens.Val().(int64) == 0 {
-			WriteJSONError(w, http.StatusTooManyRequests, "Too Many Requests")
-			return
-		}
+		// Optional: internal usage tracking
+		_ = redisClient.Incr(ctx, "usage:"+apiKey)
 
 		next.ServeHTTP(w, r)
 	})

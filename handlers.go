@@ -36,6 +36,12 @@ func MaskHandler(w http.ResponseWriter, r *http.Request) {
 func BulkHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	plan := r.Header.Get("X-Plan-Level")
+	if plan != "pro" && plan != "ultra" {
+		WriteJSONError(w, http.StatusForbidden, "Bulk masking is available only for Pro or Ultra plans")
+		return
+	}
+
 	var reqs BulkRequest
 	if err := json.NewDecoder(r.Body).Decode(&reqs); err != nil {
 		WriteJSONError(w, http.StatusBadRequest, "Invalid JSON")
@@ -81,22 +87,31 @@ func DetectHandler(w http.ResponseWriter, r *http.Request) {
 
 // /generate-key handler
 func GenerateAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
 	key, err := GenerateAPIKey()
 	if err != nil {
 		WriteJSONError(w, http.StatusInternalServerError, "Could not generate API key")
 		return
 	}
 
-	// Store metadata
+	// Allow ?plan=pro for admin (optional)
+	plan := "free"
+	if r.URL.Query().Get("plan") == "pro" && r.Header.Get("X-Admin-Token") == "secret-123" {
+		plan = "pro"
+	} else if r.URL.Query().Get("plan") == "ultra" && r.Header.Get("X-Admin-Token") == "secret-123" {
+		plan = "ultra"
+	}
+
 	data := map[string]interface{}{
 		"active":     "true",
-		"plan":       "free", // or "pro"
+		"plan":       plan,
 		"created_at": time.Now().Format(time.RFC3339),
 	}
 
 	pipe := redisClient.TxPipeline()
 	pipe.HSet(ctx, "apikey:"+key, data)
-	pipe.Expire(ctx, "apikey:"+key, 30*24*time.Hour) // 30 days expiry
+	pipe.Expire(ctx, "apikey:"+key, 30*24*time.Hour)
 	_, err = pipe.Exec(ctx)
 
 	if err != nil {
@@ -104,7 +119,6 @@ func GenerateAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(APIKeyResponse{Key: key})
 }
 
