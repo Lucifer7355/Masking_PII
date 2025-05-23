@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 // Unified error response
@@ -80,21 +81,31 @@ func DetectHandler(w http.ResponseWriter, r *http.Request) {
 
 // /generate-key handler
 func GenerateAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	key, err := GenerateAPIKey()
 	if err != nil {
 		WriteJSONError(w, http.StatusInternalServerError, "Could not generate API key")
 		return
 	}
 
-	err = redisClient.Set(ctx, "apikey:"+key, true, 0).Err()
+	// Store metadata
+	data := map[string]interface{}{
+		"active":     "true",
+		"plan":       "free", // or "pro"
+		"created_at": time.Now().Format(time.RFC3339),
+	}
+
+	pipe := redisClient.TxPipeline()
+	pipe.HSet(ctx, "apikey:"+key, data)
+	pipe.Expire(ctx, "apikey:"+key, 30*24*time.Hour) // 30 days expiry
+	_, err = pipe.Exec(ctx)
+
 	if err != nil {
 		WriteJSONError(w, http.StatusInternalServerError, "Failed to store API key")
 		return
 	}
 
-	_ = json.NewEncoder(w).Encode(APIKeyResponse{Key: key})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(APIKeyResponse{Key: key})
 }
 
 // helper: generates 32-char API key
@@ -104,4 +115,116 @@ func GenerateAPIKey() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func RotateAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
+	oldKey := r.Header.Get("X-API-Key")
+	if oldKey == "" {
+		WriteJSONError(w, http.StatusBadRequest, "Old API key missing")
+		return
+	}
+
+	meta, err := redisClient.HGetAll(ctx, "apikey:"+oldKey).Result()
+	if err != nil || meta["active"] != "true" {
+		WriteJSONError(w, http.StatusUnauthorized, "Old key invalid or revoked")
+		return
+	}
+
+	newKey, err := GenerateAPIKey()
+	if err != nil {
+		WriteJSONError(w, http.StatusInternalServerError, "Failed to generate new key")
+		return
+	}
+
+	pipe := redisClient.TxPipeline()
+	pipe.HSet(ctx, "apikey:"+newKey, meta)
+	pipe.Expire(ctx, "apikey:"+newKey, 30*24*time.Hour)
+	pipe.HSet(ctx, "apikey:"+oldKey, "active", "false") // revoke old key
+	_, err = pipe.Exec(ctx)
+
+	if err != nil {
+		WriteJSONError(w, http.StatusInternalServerError, "Key rotation failed")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(APIKeyResponse{Key: newKey})
+}
+
+func UsageHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	key := r.Header.Get("X-API-Key")
+	if key == "" {
+		WriteJSONError(w, http.StatusUnauthorized, "Missing API key")
+		return
+	}
+
+	// Validate if key is active
+	meta, err := redisClient.HGetAll(ctx, "apikey:"+key).Result()
+	if err != nil || meta["active"] != "true" {
+		WriteJSONError(w, http.StatusUnauthorized, "Invalid or revoked API key")
+		return
+	}
+
+	// Get usage count
+	count, err := redisClient.Get(ctx, "apikey:"+key+":usage_count").Int64()
+	if err != nil {
+		count = 0
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"key":         key,
+		"usage_count": count,
+		"plan":        meta["plan"],
+		"created_at":  meta["created_at"],
+		"active":      meta["active"],
+		"expires_in":  redisClient.TTL(ctx, "apikey:"+key).Val().String(),
+	})
+}
+
+func MetadataHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	key := r.Header.Get("X-API-Key")
+	if key == "" {
+		WriteJSONError(w, http.StatusUnauthorized, "Missing API key")
+		return
+	}
+
+	meta, err := redisClient.HGetAll(ctx, "apikey:"+key).Result()
+	if err != nil || len(meta) == 0 {
+		WriteJSONError(w, http.StatusUnauthorized, "Invalid API key")
+		return
+	}
+
+	meta["expires_in"] = redisClient.TTL(ctx, "apikey:"+key).Val().String()
+	json.NewEncoder(w).Encode(meta)
+}
+
+func RevokeAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	key := r.Header.Get("X-API-Key")
+	if key == "" {
+		WriteJSONError(w, http.StatusUnauthorized, "Missing API key")
+		return
+	}
+
+	meta, err := redisClient.HGetAll(ctx, "apikey:"+key).Result()
+	if err != nil || len(meta) == 0 {
+		WriteJSONError(w, http.StatusUnauthorized, "Invalid API key")
+		return
+	}
+
+	// Mark as inactive
+	err = redisClient.HSet(ctx, "apikey:"+key, "active", "false").Err()
+	if err != nil {
+		WriteJSONError(w, http.StatusInternalServerError, "Failed to revoke key")
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "API key revoked successfully",
+	})
 }
