@@ -27,7 +27,3 @@ type DetectionResponse struct {
 type ErrorResponse struct {
 	Error string `json:"error"`
 }
-
-type APIKeyResponse struct {
-	Key string `json:"key"`
-}

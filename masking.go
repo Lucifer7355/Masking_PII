@@ -6,8 +6,8 @@ import (
 )
 
 func MaskPAN(pan string) (string, bool) {
-	matched, _ := regexp.MatchString(`^[A-Z]{5}[0-9]{4}[A-Z]$`, pan)
-	if matched {
+	match, _ := regexp.MatchString(`^[A-Z]{5}[0-9]{4}[A-Z]$`, pan)
+	if match {
 		return pan[:2] + "XXX" + pan[5:], true
 	}
 	return "", false
@@ -15,8 +15,7 @@ func MaskPAN(pan string) (string, bool) {
 
 func MaskAadhaar(aadhaar string) (string, bool) {
 	digits := strings.ReplaceAll(strings.ReplaceAll(aadhaar, "-", ""), " ", "")
-	matched, _ := regexp.MatchString(`^[0-9]{12}$`, digits)
-	if matched {
+	if len(digits) == 12 {
 		return "XXXX-XXXX-" + digits[8:], true
 	}
 	return "", false
@@ -24,8 +23,8 @@ func MaskAadhaar(aadhaar string) (string, bool) {
 
 func MaskPhone(phone string) (string, bool) {
 	digits := strings.ReplaceAll(phone, " ", "")
-	matched, _ := regexp.MatchString(`^[6-9][0-9]{9}$`, digits)
-	if matched {
+	match, _ := regexp.MatchString(`^[6-9][0-9]{9}$`, digits)
+	if match {
 		return digits[:2] + "*****" + digits[7:], true
 	}
 	return "", false
@@ -40,8 +39,8 @@ func MaskEmail(email string) (string, bool) {
 }
 
 func MaskGSTIN(gstin string) (string, bool) {
-	matched, _ := regexp.MatchString(`^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$`, gstin)
-	if matched {
+	match, _ := regexp.MatchString(`^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$`, gstin)
+	if match {
 		return gstin[:5] + "*****" + gstin[10:], true
 	}
 	return "", false
